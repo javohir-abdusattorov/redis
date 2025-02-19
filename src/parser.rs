@@ -6,7 +6,7 @@ use crate::operation::Operation;
 impl TryFrom<BytesMut> for Operation {
     type Error = anyhow::Error;
 
-    fn try_from(value: BytesMut) -> Result<Operation> {
+    fn try_from(value: BytesMut) -> Result<Self> {
         Ok(Parser::new(value).parse()?.0)
     }
 }

@@ -10,6 +10,7 @@ pub enum Operation {
     Bulk(String),
     Array(Vec<Operation>),
     Error(String),
+    Null()
 }
 
 impl Operation {

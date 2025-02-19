@@ -1,19 +1,23 @@
+use std::sync::{Arc, Mutex};
+use itertools::Itertools;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 use bytes::BytesMut;
 use anyhow::Result;
-use crate::operation::Operation;
+use crate::{db::Database, metadata::{self, Metadata}, operation::Operation};
 
 
-pub struct RespHandler {
+pub struct RespHandler{
     stream: TcpStream,
     buffer: BytesMut,
+    db: Arc<Mutex<Database>>,
 }
 
 impl RespHandler {
-    pub fn new(stream: TcpStream) -> Self {
+    pub fn new(stream: TcpStream, db: Arc<Mutex<Database>>) -> RespHandler{
         RespHandler {
             stream: stream,
             buffer: BytesMut::with_capacity(512),
+            db: db,
         }
     }
 
@@ -41,6 +45,41 @@ impl RespHandler {
         match command.to_lowercase().as_str() {
             "ping" | "command" => Operation::String("PONG".to_string()),
             "echo" => args.first().unwrap().clone(),
+            "set" => {
+                let mut parameters = [None, None, None, None];
+
+                args
+                    .iter()
+                    .map(|arg| arg.clone().only_bulk().unwrap())
+                    .enumerate()
+                    .inspect(|a| println!("{a:?}"))
+                    .for_each(|(i, arg)| parameters[i] = Some(arg));
+
+                let (key, value) = match (&parameters[0], &parameters[1]) {
+                    (Some(key), Some(value)) => (key.clone(), value.clone()),
+                    _ => return Operation::Error(format!("Set command invalid arguments: {:?}", args.iter().map(|arg| arg.to_string()).join(", "))),
+                };
+
+                let metadata_parameters = parameters
+                    .into_iter()
+                    .skip(2)
+                    .filter_map(|arg| arg)
+                    .collect::<Vec<String>>();
+                let metadata = match Metadata::try_from(metadata_parameters) {
+                    Ok(metadata) => metadata,
+                    Err(err) => return Operation::Error(err.to_string()),
+                };
+
+                self.db.lock().unwrap().set(&key, value, metadata);
+                Operation::String("OK".to_string())
+            },
+            "get" => {
+                let key = args.first().unwrap().clone().only_bulk().unwrap();
+                match self.db.lock().unwrap().get(&key) {
+                    None => Operation::Null(),
+                    Some(result) => Operation::Bulk(result)
+                }
+            },
             any_command => Operation::Error(format!("Unexpected command: {any_command:?}"))
         }
     }
@@ -55,7 +94,7 @@ impl RespHandler {
     }
 
     async fn write_value(&mut self, operation: Operation) -> Result<()> {
-        println!("response: {:?}", operation);
+        println!("response: {:?}", operation.clone().to_string());
         self.stream.write(operation.to_string().as_bytes()).await?;
         Ok(())
     }

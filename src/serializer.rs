@@ -12,7 +12,8 @@ impl ToString for Operation {
                 vec.len(),
                 vec.into_iter().map(|op| op.to_string()).collect::<String>()
             ),
-            Operation::Error(str) => format!("-{str}{crlf}")
+            Operation::Error(str) => format!("-{str}{crlf}"),
+            Operation::Null() => format!("$-1{crlf}"),
         }
     }
 }
