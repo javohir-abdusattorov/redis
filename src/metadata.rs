@@ -1,11 +1,10 @@
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use itertools::Itertools;
-use crate::operation::Operation;
 
 
 pub struct Metadata {
-    expire: u128
+    expire: u128,
 }
 
 impl TryFrom<Vec<String>> for Metadata {
@@ -35,6 +34,18 @@ impl TryFrom<Vec<String>> for Metadata {
 
         Ok(Metadata {
             expire: expire,
+        })
+    }
+}
+
+impl TryFrom<u128> for Metadata {
+    type Error = anyhow::Error;
+
+    fn try_from(secs: u128) -> Result<Self> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+
+        Ok(Metadata {
+            expire: now + (secs * 1000),
         })
     }
 }

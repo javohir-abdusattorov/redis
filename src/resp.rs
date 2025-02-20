@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex};
 use itertools::Itertools;
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use bytes::BytesMut;
 use anyhow::Result;
-use crate::{db::Database, metadata::{self, Metadata}, operation::Operation};
+use crate::{db::Database, metadata::Metadata, operation::Operation};
 
 
 pub struct RespHandler{
@@ -27,7 +27,7 @@ impl RespHandler {
                 Err(err) => Operation::Error(format!("[Handler] Unexpected error: {err:?}")),
                 Ok(command) => {
                     if let Some(operation) = command {
-                        println!("command: {operation:?}");
+                        // println!("command: {operation:?}");
                         let (command, args) = operation.only_array().unwrap();
                         self.route(command, args)
                     }
@@ -52,7 +52,6 @@ impl RespHandler {
                     .iter()
                     .map(|arg| arg.clone().only_bulk().unwrap())
                     .enumerate()
-                    .inspect(|a| println!("{a:?}"))
                     .for_each(|(i, arg)| parameters[i] = Some(arg));
 
                 let (key, value) = match (&parameters[0], &parameters[1]) {
@@ -94,7 +93,7 @@ impl RespHandler {
     }
 
     async fn write_value(&mut self, operation: Operation) -> Result<()> {
-        println!("response: {:?}", operation.clone().to_string());
+        // println!("response: {:?}", operation.clone().to_string());
         self.stream.write(operation.to_string().as_bytes()).await?;
         Ok(())
     }
