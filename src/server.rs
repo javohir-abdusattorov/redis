@@ -24,9 +24,14 @@ impl Server {
             self.streamer(listener).await;
         };
 
-        Runtime::new()
-                .unwrap()
-                .block_on(server);
+        std::thread::Builder::new()
+            .name("server".into())
+            .spawn(move || {
+                Runtime::new()
+                    .unwrap()
+                    .block_on(server);
+            })
+            .unwrap();
     }
 
     async fn streamer(self, listener: TcpListener) {

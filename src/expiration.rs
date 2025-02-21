@@ -26,7 +26,10 @@ impl Expiration {
         }
 
         self.initialized = true;
-        std::thread::spawn(move || self.expire())
+        std::thread::Builder::new()
+            .name("expiration".into())
+            .spawn(move || self.expire())
+            .unwrap()
     }
 
     fn expire(&self) {
