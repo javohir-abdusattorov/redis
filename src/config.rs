@@ -20,7 +20,7 @@ impl Config {
             expiration_min_percent: 25,
             expiration_runtime: Duration::from_secs(1),
             expiration_min_interval: Duration::from_secs(5),
-            expiration_max_interval: Duration::from_secs(60),
+            expiration_max_interval: Duration::from_secs(10),
         }
     }
 }

@@ -3,11 +3,11 @@ use config::Config;
 use db::Database;
 use expiration::Expiration;
 use metadata::Metadata;
-use tokio::{net::TcpListener, runtime::Runtime};
-use resp::RespHandler;
+use server::Server;
 
 mod config;
 mod db;
+mod server;
 mod resp;
 mod operation;
 mod metadata;
@@ -17,46 +17,14 @@ mod expiration;
 
 fn main() {
     let config = Arc::new(Config::build());
-
     let db = Arc::new(Mutex::new(Database::new()));
+
     populate(Arc::clone(&db));
 
-    let expire_config = Arc::clone(&config);
-    let expire_db = Arc::clone(&db);
-    std::thread::spawn(|| Expiration::new(expire_config, expire_db).run());
+    Expiration::new(Arc::clone(&config), Arc::clone(&db)).run();
+    Server::new(Arc::clone(&config), Arc::clone(&db)).start();
 
-    std::thread::spawn(|| {
-        let rt = Runtime::new().unwrap();
-
-        rt.spawn(async move {
-            let db = Arc::clone(&db);
-            let host = [config.host.clone(), config.port.clone()].join(":");
-            let listener = TcpListener::bind(host.clone()).await.unwrap();
-            println!("Redis server started at host: {host}");
-
-            loop {
-                let stream = listener.accept().await;
-
-                match stream {
-                    Ok((stream, addr)) => {
-                        let db = Arc::clone(&db);
-                        println!("connection: {addr:?}");
-        
-                        tokio::spawn(async move {
-                            RespHandler::new(
-                                stream,
-                                db,
-                            )
-                            .process().await
-                        });
-                    }
-                    Err(e) => {
-                        println!("error: {}", e);
-                    }
-                }
-            }
-        });
-    });
+    std::thread::park();
 }
 
 fn populate(db: Arc<Mutex<Database>>) {

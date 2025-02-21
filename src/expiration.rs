@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Instant;
 use crate::config::Config;
 use crate::db::Database;
@@ -19,20 +20,16 @@ impl Expiration {
         }
     }
 
-    pub fn run(&mut self) {
-        if !self.initialized {
-            self.expire();
-            self.initialized = true;
+    pub fn run(mut self) -> JoinHandle<()> {
+        if self.initialized || !self.config.interval_expiration_enabled {
+            return std::thread::spawn(|| {});
         }
+
+        self.initialized = true;
+        std::thread::spawn(move || self.expire())
     }
 
     fn expire(&self) {
-        if !self.config.interval_expiration_enabled {
-            return;
-        }
-
-        println!("[Expiration] Started");
-
         let now = Instant::now();
         let total = self.db.lock().unwrap().size() as u32;
         let mut processed: u32 = 0;
