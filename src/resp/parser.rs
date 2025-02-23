@@ -1,6 +1,6 @@
 use bytes::BytesMut;
 use anyhow::{Ok, Result};
-use crate::operation::Operation;
+use super::operation::Operation;
 
 
 impl TryFrom<BytesMut> for Operation {

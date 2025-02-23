@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, sync::{Arc, Mutex}};
 use tokio::{net::{TcpListener, TcpStream}, runtime::Runtime};
-use crate::{config::Config, db::Database, handler::Handler, router::Router};
+use super::{handler::Handler, router::Router};
+use crate::{config::Config, db::Database};
 
 
 pub struct Server {

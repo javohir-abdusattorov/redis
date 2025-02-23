@@ -3,23 +3,18 @@ use config::Config;
 use db::Database;
 use expiration::Expiration;
 use metadata::Metadata;
-use server::Server;
+use server::server::Server;
 
+mod resp;
+mod server;
 mod config;
 mod db;
-mod server;
-mod handler;
-mod router;
-mod command;
-mod operation;
 mod metadata;
-mod parser;
-mod serializer;
 mod expiration;
 
 fn main() {
     let config = Arc::new(Config::build());
-    let db = Arc::new(Mutex::new(Database::new()));
+    let db: Arc<Mutex<Database>> = Arc::new(Mutex::new(Database::new()));
 
     populate(Arc::clone(&db));
 
