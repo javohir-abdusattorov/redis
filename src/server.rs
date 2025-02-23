@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::{Arc, Mutex}};
 use tokio::{net::{TcpListener, TcpStream}, runtime::Runtime};
-use crate::{config::Config, db::Database, resp::RespHandler};
+use crate::{config::Config, db::Database, handler::Handler, router::Router};
 
 
 pub struct Server {
@@ -53,11 +53,10 @@ impl Server {
         println!("[Server] connection established: {addr:?}");
 
         tokio::spawn(async move {
-            RespHandler::new(
-                stream,
-                db,
-            )
-            .process().await
+            let router = Router::new(db);
+            let mut handler = Handler::new(stream, router);
+
+            handler.process().await
         });
     }
 }
