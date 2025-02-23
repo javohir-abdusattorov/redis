@@ -21,6 +21,7 @@ impl Server {
             let host = [self.config.host.clone(), self.config.port.clone()].join(":");
             let listener = TcpListener::bind(host.clone()).await.unwrap();
             println!("[Server] Started at: {host}");
+
             self.streamer(listener).await;
         };
 

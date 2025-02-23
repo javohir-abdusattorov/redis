@@ -6,6 +6,7 @@ pub enum Operation {
     String(String),
     Bulk(String),
     Array(Vec<Operation>),
+    Integer(i128),
     Error(String),
     Null()
 }

@@ -1,4 +1,4 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use itertools::Itertools;
 
@@ -54,5 +54,18 @@ impl Metadata {
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
         self.expire <= now
+    }
+
+    pub fn expire_timestamp(&self) -> u128 {
+        self.expire
+    }
+
+    pub fn expire_duration(&self) -> Option<Duration> {
+        if self.expire == u128::MAX {
+            None
+        } else {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+            Some(Duration::from_millis((self.expire - now) as u64))
+        }
     }
 }

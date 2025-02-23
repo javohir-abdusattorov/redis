@@ -8,10 +8,11 @@ impl ToString for Operation {
             Operation::String(str) => format!("+{str}{crlf}"),
             Operation::Bulk(str) => format!("${}{crlf}{str}{crlf}", str.len()),
             Operation::Array(vec) => format!(
-                "*{}{}",
+                "*{}{crlf}{}",
                 vec.len(),
                 vec.into_iter().map(|op| op.to_string()).collect::<String>()
             ),
+            Operation::Integer(num) => format!(":{num}{crlf}"),
             Operation::Error(str) => format!("-{str}{crlf}"),
             Operation::Null() => format!("$-1{crlf}"),
         }

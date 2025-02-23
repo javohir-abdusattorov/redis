@@ -1,9 +1,8 @@
 use std::sync::{Arc, Mutex};
-use itertools::Itertools;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use bytes::BytesMut;
 use anyhow::Result;
-use crate::{db::Database, metadata::Metadata, operation::Operation};
+use crate::{db::Database, metadata::Metadata, operation::Operation, command::Command};
 
 
 pub struct RespHandler{
@@ -23,63 +22,84 @@ impl RespHandler {
 
     pub async fn process(&mut self) {
         loop {
-            let response = match self.read_value().await {
-                Err(err) => Operation::Error(format!("[Handler] Unexpected error: {err:?}")),
-                Ok(command) => {
-                    if let Some(operation) = command {
-                        // println!("command: {operation:?}");
-                        let (command, args) = operation.only_array().unwrap();
-                        self.route(command, args)
-                    }
-                    else {
-                        break;
-                    }
+            let value: Result<Option<Operation>> = self.read_value().await;
+            let unexpected_err = |err| anyhow::anyhow!(format!("[Handler] Unexpected request: {err:?}"));
+
+            let error_handle = || -> Result<Option<Operation>> {
+                match value.map_err(unexpected_err)? {
+                    None => Ok(None),
+                    Some(operation) => {
+                        let command = Command::try_from(operation)?;
+                        let result = self.route(command)?;
+
+                        Ok(Some(result))
+                    },
                 }
             };
 
-            self.write_value(response).await.unwrap();
+            let response = match error_handle() {
+                Err(err) => Operation::Error(err.to_string()),
+                Ok(response) => match response {
+                    None => break,
+                    Some(value) => value,
+                },
+            };
+
+            self.write_value(response).await.unwrap()
         }
     }
 
-    fn route(&self, command: String, args: Vec<Operation>) -> Operation {
-        match command.to_lowercase().as_str() {
-            "ping" | "command" => Operation::String("PONG".to_string()),
-            "echo" => args.first().unwrap().clone(),
-            "set" => {
-                let mut parameters = [None, None, None, None];
-
-                args
-                    .iter()
-                    .map(|arg| arg.clone().only_bulk().unwrap())
-                    .enumerate()
-                    .for_each(|(i, arg)| parameters[i] = Some(arg));
-
-                let (key, value) = match (&parameters[0], &parameters[1]) {
-                    (Some(key), Some(value)) => (key.clone(), value.clone()),
-                    _ => return Operation::Error(format!("Set command invalid arguments: {:?}", args.iter().map(|arg| arg.to_string()).join(", "))),
-                };
-
-                let metadata_parameters = parameters
-                    .into_iter()
-                    .skip(2)
-                    .filter_map(|arg| arg)
-                    .collect::<Vec<String>>();
-                let metadata = match Metadata::try_from(metadata_parameters) {
-                    Ok(metadata) => metadata,
-                    Err(err) => return Operation::Error(err.to_string()),
-                };
-
-                self.db.lock().unwrap().set(&key, value, metadata);
-                Operation::String("OK".to_string())
-            },
+    fn route(&self, command: Command) -> Result<Operation> {
+        match command.as_str() {
+            "ping" | "command" => Ok(Operation::String("PONG".to_string())),
+            "echo" => Ok(Operation::Bulk(command.single_argument()?)),
             "get" => {
-                let key = args.first().unwrap().clone().only_bulk().unwrap();
+                let key = command.single_argument()?;
                 match self.db.lock().unwrap().get(&key) {
-                    None => Operation::Null(),
-                    Some(result) => Operation::Bulk(result)
+                    None => Ok(Operation::Null()),
+                    Some(result) => Ok(Operation::Bulk(result)),
                 }
             },
-            any_command => Operation::Error(format!("Unexpected command: {any_command:?}"))
+            "set" => {
+                let (key, value) = command.first_2_arguments()?;
+
+                let metadata_parameters = command.optional_arguments_after(2);
+                let metadata = Metadata::try_from(metadata_parameters)?;
+
+                self.db.lock().unwrap().set(&key, value, metadata);
+                Ok(Operation::String("OK".to_string()))
+            },
+            "expire" => {
+                let (key, expire_seconds) = command.first_2_arguments()?;
+                let seconds = expire_seconds.parse::<u128>().map_err(|_| anyhow::anyhow!(format!("Expire command invalid arguments: cannot parse to integer")))?;
+
+                let metadata = Metadata::try_from(seconds).unwrap();
+                let timestamp = self.db.lock().unwrap().set_expire(&key, metadata).unwrap_or(0);
+
+                Ok(Operation::Integer(timestamp as i128))
+            },
+            "del" => {
+                let key = command.single_argument()?;
+                self.db.lock().unwrap().del(&key);
+                Ok(Operation::Integer(1))
+            },
+            "ttl" => {
+                let key = command.single_argument()?;
+                let ttl = self.db.lock().unwrap().ttl(&key);
+                Ok(Operation::Integer(ttl))
+            },
+            "keys" => {
+                let pattern = command.single_argument()?;
+                let result = self.db.lock().unwrap()
+                    .search(&pattern)
+                    .into_iter()
+                    .filter(|value| self.db.lock().unwrap().try_expire(value).is_none())
+                    .map(|value| Operation::Bulk(value))
+                    .collect();
+
+                    Ok(Operation::Array(result))
+            },
+            unknown_command => Err(anyhow::anyhow!(format!("[Handler] Unexpected command: {unknown_command:?}")))
         }
     }
 

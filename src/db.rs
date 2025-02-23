@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use rand::Rng;
 use crate::metadata::Metadata;
+use fast_glob::glob_match;
 
 
 pub struct Database {
@@ -34,6 +35,29 @@ impl Database {
         self.storage.get(key).map(|value| value.clone())
     }
 
+    pub fn ttl(&mut self, key: &String) -> i128 {
+        match self.get(key) {
+            None => -2,
+            Some(_) => {
+                match self.metadata.get(key).unwrap().expire_duration() {
+                    None => -1,
+                    Some(duration) => duration.as_secs() as i128
+                }
+            }
+        }
+    }
+
+    pub fn set_expire(&mut self, key: &String, metatada: Metadata) -> Option<u128> {
+        self
+            .get(key)
+            .map(|_| {
+                let timestamp = metatada.expire_timestamp();
+                self.metadata.insert(key.clone(), metatada);
+
+                timestamp
+            })
+    }
+
     pub fn try_expire(&mut self, key: &String) -> Option<()> {
         if self.is_expired(key) {
             self.del(key);
@@ -48,6 +72,31 @@ impl Database {
         self.storage.remove(key);
         self.metadata.remove(key);
         self.keys.remove(self.find_position(key).unwrap());
+    }
+
+    pub fn search(&mut self, pattern: &String) -> Vec<String> {
+        let pattern = pattern.as_str();
+
+        // If requesting all keys
+        if pattern == "*" {
+            self.keys.clone()
+        }
+
+        // If there is not glob pattern, just get by key
+        else if !pattern.contains(['*', '?', '[', ']', '-', '^']) {
+            self.get(&pattern.to_string())
+                .map(|_| vec![pattern.to_string()])
+                .unwrap_or(vec![])
+        }
+
+        // Glob pattern search
+        else {
+            self.keys
+                .iter()
+                .filter(|key| glob_match(pattern, &key))
+                .map(|str| str.clone())
+                .collect()
+        }
     }
 
     pub fn find_position(&self, key: &String) -> Option<usize> {
