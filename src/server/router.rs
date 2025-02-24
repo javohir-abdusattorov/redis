@@ -1,18 +1,21 @@
 use std::sync::{Arc, Mutex};
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use super::command::Command;
+use crate::config::Config;
 use crate::resp::operation::Operation;
 use crate::{db::Database, metadata::Metadata};
 
 
 pub struct Router {
-    db: Arc<Mutex<Database>>
+    config: Arc<Config>,
+    db: Arc<Mutex<Database>>,
 }
 
 impl Router {
-    pub fn new(db: Arc<Mutex<Database>>) -> Self {
+    pub fn new(config: Arc<Config>, db: Arc<Mutex<Database>>) -> Self {
         Router {
-            db: db
+            config,
+            db,
         }
     }
 
@@ -27,7 +30,8 @@ impl Router {
             "del" => self.del(command),
             "ttl" => self.ttl(command),
             "keys" => self.keys(command),
-            unknown_command => Err(anyhow::anyhow!(format!("[Handler] Unexpected command: {unknown_command:?}")))
+            "config" => self.config(command),
+            unknown_command => Err(anyhow::anyhow!(format!("[Router] Unexpected command: {unknown_command:?}")))
         }
     }
 
@@ -91,5 +95,24 @@ impl Router {
             .collect();
 
         Ok(Operation::Array(result))
+    }
+
+    fn config(&self, command: Command) -> Result<Operation> {
+        let (command, config) = command.first_2_arguments()?;
+        match command.as_str() {
+            "get" => {
+                let result = match self.config.get_by_key(&config) {
+                    None => vec![],
+                    Some(value) => vec![config, value.clone()],
+                };
+
+                let result = result.into_iter()
+                    .map(|value| Operation::Bulk(value))
+                    .collect();
+
+                Ok(Operation::Array(result))
+            },
+            any_command => Err(anyhow::anyhow!("Unexpected CONFIG command: {any_command}"))
+        }
     }
 }

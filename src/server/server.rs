@@ -50,11 +50,12 @@ impl Server {
     }
 
     fn handler(&self, stream: TcpStream, addr: SocketAddr) {
+        let config = Arc::clone(&self.config);
         let db = Arc::clone(&self.db);
         println!("[Server] connection established: {addr:?}");
 
         tokio::spawn(async move {
-            let router = Router::new(db);
+            let router = Router::new(config, db);
             let mut handler = Handler::new(stream, router);
 
             handler.process().await
