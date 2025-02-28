@@ -3,7 +3,8 @@ use anyhow::{Ok, Result};
 use super::command::Command;
 use crate::config::Config;
 use crate::resp::operation::Operation;
-use crate::{db::Database, metadata::Metadata};
+use crate::metadata::Metadata;
+use crate::storage::db::Database;
 
 
 pub struct Router {

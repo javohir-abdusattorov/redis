@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use itertools::Itertools;
 use rand::Rng;
-use crate::metadata::Metadata;
 use fast_glob::glob_match;
+use crate::metadata::Metadata;
 
 
 pub struct Database {

@@ -1,14 +1,14 @@
 use std::sync::{Arc, Mutex};
 use config::Config;
-use db::Database;
 use expiration::Expiration;
 use metadata::Metadata;
 use server::server::Server;
+use storage::{db::Database, parser::RDBParser};
 
 mod resp;
 mod server;
+mod storage;
 mod config;
-mod db;
 mod metadata;
 mod expiration;
 
@@ -18,6 +18,7 @@ fn main() {
 
     populate(Arc::clone(&db));
 
+    RDBParser::new(Arc::clone(&config)).parse().unwrap();
     Expiration::new(Arc::clone(&config), Arc::clone(&db)).run();
     Server::new(Arc::clone(&config), Arc::clone(&db)).start();
 
@@ -28,7 +29,7 @@ fn populate(db: Arc<Mutex<Database>>) {
     use rand::{distr::Alphanumeric, Rng};
 
     let mut db = db.lock().unwrap();
-    let n = 10_000;
+    let n = 1;
     (0..n).for_each(|_| {
         let str = rand::rng().sample_iter(&Alphanumeric).take(16).map(char::from).collect::<String>();
         db.set(&str, "1".to_string(), Metadata::try_from(1500).unwrap());

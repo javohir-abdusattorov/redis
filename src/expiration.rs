@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 use crate::config::Config;
-use crate::db::Database;
+use crate::storage::db::Database;
 
 
 pub struct Expiration {
