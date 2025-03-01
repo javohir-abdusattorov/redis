@@ -1,21 +1,27 @@
-use std::{fs::File, io::{BufReader, Read}, path::Path, sync::Arc, vec};
+use std::{fs::File,io::{BufReader, Read},path::Path,sync::{Arc, Mutex}};
 use anyhow::Result;
-use crate::config::Config;
-use super::constants::{MAGIC_NUMBER, OPCODE_EOF, OPCODE_META, OPCODE_START_DB};
+use super::{constants::{blob_encoding, encoding_type, opcode, MAGIC_NUMBER}, db::Database};
+use crate::{config::Config, operation::metadata::Metadata};
 
 
-pub struct RDBParser {
+pub struct Parser {
+    db: Arc<Mutex<Database>>,
     reader: BufReader<File>,
+    database: u32,
+    expiretime: Option<u64>,
 }
 
-impl RDBParser {
-    pub fn new(config: Arc<Config>) -> Self {
+impl Parser {
+    pub fn new(config: Arc<Config>, db: Arc<Mutex<Database>>) -> Self {
         let path = Path::new(&config.rdb_dir).join(&config.rdb_file);
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
 
-        RDBParser {
+        Parser {
+            db,
             reader,
+            database: 0,
+            expiretime: None,
         }
     }
 
@@ -32,7 +38,7 @@ impl RDBParser {
         self.reader.read_exact(&mut magic)?;
 
         if &magic != MAGIC_NUMBER {
-            return Err(anyhow::anyhow!(format!("[RDB Parser] Invalid magic number: {:?}", magic)));
+            return Err(anyhow::anyhow!(format!("[RDB Parser] Invalid magic number: {magic:?}")));
         }
 
         Ok(())
@@ -48,170 +54,129 @@ impl RDBParser {
 
     fn process_entries(&mut self) -> Result<()> {
         loop {
-            let mut marker = [0; 1];
-            if self.reader.read_exact(&mut marker).is_err() {
-                break;
-            }
+            let operation = self.read_u8()?;
+            match operation {
+                opcode::META => {
+                    let (key_str, value_str) = (
+                        self.read_string()?,
+                        self.read_string()?,
+                    );
 
-            match marker[0] {
-                OPCODE_META => {
-                    println!("[Section] OPCODE_META");
-                    self.process_metadata()?;
+                    println!("[Metadata] {key_str} = {value_str}");
                 }
-                OPCODE_START_DB => {
-                    println!("");
-                    println!("[Section] OPCODE_START_DB");
-                    self.process_start_db()?;
+                opcode::START_DB => {
+                    self.database = self.read_length()?;
+                    println!("[DB] Index = {}", self.database);
                 }
-                0xFB => {
-                    println!("[Section] RESIZE_DB");
-                    self.process_resize_db()?;
+                opcode::RESIZE_DB => {
+                    let total_size = self.read_length()?;
+                    let expires_size = self.read_length()?;
+                    println!("[DB] hash-table size = {total_size}; expires size = {expires_size}");
                 }
-                0xFD | 0xFC => {
-                    println!("[Section] KEY_WITH_EXPIRATION");
-                    self.process_key_with_expiration(marker[0])?;
+                opcode::KEY_WITH_EXPIRATION_MS => {
+                    let expiretime_ms = self.read_u64()?;
+                    self.expiretime = Some(expiretime_ms);
                 }
-                0x00 => {
-                    println!("[Section] KEY_WITHOUT_EXPIRATION");
-                    self.process_key_without_expiration()?;
+                opcode::KEY_WITH_EXPIRATION_SEC => {
+                    let expiretime_sec = self.read_u32()?;
+                    self.expiretime = Some(expiretime_sec as u64 * 1000);
                 }
-                OPCODE_EOF => {
-                    println!("[Section] OPCODE_EOF");
+                opcode::EOF => {
                     break;
                 }
-                _ => eprintln!("Unknown / unsupported marker: 0x{:02X}", marker[0])
+                _ => {
+                    let key = self.read_string()?;
+                    self.read_entry(key, operation)?;
+                    self.expiretime = None;
+                },
             }
         }
 
         Ok(())
     }
 
-    fn process_metadata(&mut self) -> Result<()> {
-        let first_key_byte = self.read_u8()?;
-        let key_length = self.read_length_or_integer(first_key_byte)?;
-        let mut key_bytes = vec![0; key_length];
-        self.reader.read_exact(&mut key_bytes)?;
-
-        let key = String::from_utf8_lossy(&key_bytes).to_string();
-        let first_value_byte = self.read_u8()?;
-        let value = self.read_length_or_integer(first_value_byte)?;
-
-        if first_value_byte >> 6 == 0b11 {
-            println!("[Metadata] {} = {}", key, value);
-        }
-        else {
-            let mut value_bytes = vec![0; value];
-            self.reader.read_exact(&mut value_bytes)?;
-
-            match String::from_utf8(value_bytes.clone()) {
-                Ok(value) => println!("[Metadata] {} = {}", key, value),
-                Err(_) => {
-                    let hex_value = value_bytes.into_iter()
-                        .map(|b| format!("{:02X}", b))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    println!("[Metadata] {} = {}", key, hex_value);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn process_start_db(&mut self) -> Result<()> {
-        let db_index = self.read_u8()?;
-        println!("[DB] index = {db_index}");
-        Ok(())
-    }
-
-    fn process_resize_db(&mut self) -> Result<()> {
-        let total_size = self.read_u8()?;
-        let expires_size = self.read_u8()?;
-        println!("[DB] hash-table size = {total_size}; expires size = {expires_size}");
-
-        Ok(())
-    }
-
-    fn process_key_with_expiration(&mut self, marker: u8) -> Result<()> {
-        let expire_type = if marker == 0xFD { "s" } else { "ms" };
-        let expiration_ms = if expire_type == "seconds" {
-            let seconds = self.read_32bit_length()?;
-            Some((seconds as u64) * 1000)
-        } else {
-            let ms = self.read_64bit_length()?;
-            Some(ms)
+    fn read_entry(&mut self, key: String, value_encoding: u8) -> Result<()> {
+        match value_encoding {
+            encoding_type::STRING => {
+                let value = self.read_string()?;
+                let metadata = Metadata::try_from(self.expiretime)?;
+                self.db.lock().unwrap().set(&key, value, metadata);
+            },
+            _ => return Err(anyhow::anyhow!("[DB Parser] Cannot parse encoding type: {value_encoding}"))
         };
 
-        let _value_type = self.read_u8()?;
-
-        let key_length = self.read_u8()? as usize;
-        let mut key_bytes = vec![0; key_length];
-        self.reader.read_exact(&mut key_bytes)?;
-        let key_str = String::from_utf8_lossy(&key_bytes).to_string();
-
-        let value_length = self.read_u8()? as usize;
-        let mut value_byte = vec![0; value_length];
-        self.reader.read_exact(&mut value_byte)?;
-        let value_str = String::from_utf8_lossy(&value_byte).to_string();
-
-        println!("[EXPIRE Entry] key: {key_str:?}; value: {value_str}; expiration: {expiration_ms:?}");
-
         Ok(())
     }
 
-    fn process_key_without_expiration(&mut self) -> Result<()> {
-        let first_value_byte = self.read_u8()?;
-        let key_length = first_value_byte as usize; // self.read_length_or_integer(first_value_byte)?;
-        let mut key_bytes = vec![0; key_length];
-        self.reader.read_exact(&mut key_bytes)?;
-        let key_str = String::from_utf8_lossy(&key_bytes).to_string();
-        println!("key_length = {key_length:?}; first_value_byte = {first_value_byte}");
-        println!("key_str = {key_str:?}");
+    fn read_blob(&mut self) -> Result<Vec<u8>> {
+        let (length, is_encoded) = self.read_length_with_encoding()?;
 
-        // let first_value_byte = self.read_u8()?;
-        // let value_length = first_value_byte as usize; // self.read_length_or_integer(first_value_byte)?;
-        // println!("value_length = {value_length:?}; first_value_byte = {first_value_byte}");
-        // let mut value_bytes = vec![0; value_length];
-        // self.reader.read_exact(&mut value_bytes)?;
-        // let value_str = String::from_utf8_lossy(&value_bytes).to_string();
-        let value_str = self.read_integer_or_string()?;
+        if !is_encoded {
+            self.read_exact(length as usize)
+        } else {
+            let int = match length {
+                blob_encoding::INT8 => self.read_u8()? as i32,
+                blob_encoding::INT16 => self.read_u16()? as i32,
+                blob_encoding::INT32 => self.read_u32()? as i32,
+                blob_encoding::LZF => {
+                    let compressed_length = self.read_length()?;
+                    let real_length = self.read_length()?;
+                    let compressed_bytes = self.read_exact(compressed_length as usize)?;
+                    let decompressed =
+                        lzf::decompress(&compressed_bytes, real_length as usize).unwrap();
 
-        println!("[NON-EXPIRE Entry] key = {key_str:?}; value = {value_str:?}");
-        Ok(())
-    }
+                    return Ok(decompressed);
+                }
+                _ => return Err(anyhow::anyhow!("")),
+            };
 
+            let buf = int
+                .to_string()
+                .as_bytes()
+                .into_iter()
+                .map(|c| *c)
+                .collect::<Vec<u8>>();
 
-    fn read_integer_or_string(&mut self) -> Result<String> {
-        let first_value_byte = self.read_u8()?;
-
-        if first_value_byte >> 6 == 0b11 {
-            let value = self.read_length_or_integer(first_value_byte)?;
-            return Ok(value.to_string());
+            Ok(buf)
         }
+    }
 
-        let value = self.read_length_or_integer(first_value_byte)?;
-        let mut value_bytes = vec![0; value];
-        self.reader.read_exact(&mut value_bytes)?;
+    fn read_string(&mut self) -> Result<String> {
+        Ok(String::from_utf8_lossy(&self.read_blob()?).to_string())
+    }
 
-        match String::from_utf8(value_bytes.clone()) {
-            Ok(value) => Ok(value.to_string()),
-            Err(_) => {
-                Ok(value_bytes.into_iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<Vec<_>>()
-                    .join(" "))
+    fn read_length(&mut self) -> Result<u32> {
+        Ok(self.read_length_with_encoding()?.0)
+    }
+
+    fn read_length_with_encoding(&mut self) -> Result<(u32, bool)> {
+        let enc_type = self.read_u8()?;
+        let mut is_encoded = false;
+
+        let length = match (enc_type & 0xC0) >> 6 {
+            3 => {
+                is_encoded = true;
+                (enc_type & 0x3F) as u32
             }
-        }
+            0 => {
+                (enc_type & 0x3F) as u32
+            }
+            1 => {
+                let next_byte = self.read_u8()?;
+                (((enc_type & 0x3F) as u32) << 8) | next_byte as u32
+            }
+            _ => {
+                self.read_u32()? as u32
+            }
+        };
+
+        Ok((length, is_encoded))
     }
 
-    fn read_length_or_integer(&mut self, first_byte: u8) -> Result<usize> {
-        match first_byte >> 6 {
-            0b00 => Ok((first_byte & 0x3F) as usize),
-            0b01 => self.read_14bit_length(first_byte),
-            0b10 => self.read_32bit_length(),
-            0b11 => self.read_encoded_integer(first_byte & 0x3F),
-            _ => Err(anyhow::anyhow!("[RDB Parser] Invalid length encoding"))
-        }
+    fn read_exact(&mut self, length: usize) -> Result<Vec<u8>> {
+        let mut buf = vec![0; length];
+        self.reader.read_exact(&mut buf)?;
+        Ok(buf)
     }
 
     fn read_u8(&mut self) -> Result<u8> {
@@ -220,78 +185,21 @@ impl RDBParser {
         Ok(u8::from_le_bytes(buf))
     }
 
-    fn read_14bit_length(&mut self, first_byte: u8) -> Result<usize> {
-        let second_byte = self.read_u8()?;
-        Ok((((first_byte & 0x3F) as usize) << 8) | (second_byte as usize))
-    }
-
-    fn read_16bit_length(&mut self) -> Result<usize> {
+    fn read_u16(&mut self) -> Result<usize> {
         let mut buf = [0; 2];
         self.reader.read_exact(&mut buf)?;
         Ok(u16::from_le_bytes(buf) as usize)
     }
 
-    fn read_32bit_length(&mut self) -> Result<usize> {
+    fn read_u32(&mut self) -> Result<usize> {
         let mut buf = [0; 4];
         self.reader.read_exact(&mut buf)?;
         Ok(u32::from_le_bytes(buf) as usize)
     }
 
-    fn read_64bit_length(&mut self) -> Result<u64> {
+    fn read_u64(&mut self) -> Result<u64> {
         let mut buf = [0; 8];
         self.reader.read_exact(&mut buf)?;
         Ok(u64::from_le_bytes(buf))
-    }
-
-    fn read_encoded_integer(&mut self, encoding_type: u8) -> Result<Vec<u8>> {
-        match encoding_type {
-            0 => {
-                let val = self.read_u8()?;
-                Ok(vec![val])
-            }
-            1 => {
-                let val = self.read_16bit_length()?;
-                Ok(vec![val as u8])
-            }
-            2 => {
-                let val = self.read_32bit_length()?;
-                Ok(vec![val as u8])
-            }
-            3 => {
-                let compressed_length = self.read_length()?;
-                let real_length = self.read_length()?;
-
-                let mut data_bytes = vec![0; compressed_length as usize];
-                self.reader.read_exact(&mut data_bytes)?;
-                let res = lzf::decompress(&data_bytes, real_length as usize).unwrap();
-                println!("lzf: {}", String::from_utf8_lossy(&res).to_string());
-
-                Ok(0)
-            }
-            n => Err(anyhow::anyhow!("Unsupported encoding-type for integer: {n}"))
-        }
-    }
-
-    fn read_length(&mut self) -> Result<u32> {
-        let length;
-        let enc_type = self.read_u8()?;
-
-        match (enc_type & 0xC0) >> 6 {
-            3 => {
-                length = (enc_type & 0x3F) as u32;
-            },
-            0 => {
-                length = (enc_type & 0x3F) as u32;
-            },
-            1 => {
-                let next_byte = self.read_u8()?;
-                length = (((enc_type & 0x3F) as u32) <<8) | next_byte as u32;
-            },
-            _ => {
-                length = self.read_32bit_length()? as u32;
-            }
-        }
-
-        Ok(length)
     }
 }

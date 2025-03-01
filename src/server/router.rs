@@ -2,15 +2,15 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Ok, Result};
 use super::command::Command;
 use crate::config::Config;
-use crate::resp::operation::Operation;
-use crate::metadata::Metadata;
+use crate::operation::metadata::Metadata;
+use crate::operation::operation::Operation;
 use crate::storage::db::Database;
 
 
 pub struct Router {
     config: Arc<Config>,
     db: Arc<Mutex<Database>>,
-}
+}   
 
 impl Router {
     pub fn new(config: Arc<Config>, db: Arc<Mutex<Database>>) -> Self {

@@ -1,15 +1,14 @@
 use std::sync::{Arc, Mutex};
 use config::Config;
 use expiration::Expiration;
-use metadata::Metadata;
+use operation::metadata::Metadata;
 use server::server::Server;
-use storage::{db::Database, parser::RDBParser};
+use storage::{db::Database, parser::Parser};
 
-mod resp;
+mod operation;
 mod server;
 mod storage;
 mod config;
-mod metadata;
 mod expiration;
 
 fn main() {
@@ -18,7 +17,7 @@ fn main() {
 
     populate(Arc::clone(&db));
 
-    RDBParser::new(Arc::clone(&config)).parse().unwrap();
+    Parser::new(Arc::clone(&config), Arc::clone(&db)).parse().unwrap();
     Expiration::new(Arc::clone(&config), Arc::clone(&db)).run();
     Server::new(Arc::clone(&config), Arc::clone(&db)).start();
 

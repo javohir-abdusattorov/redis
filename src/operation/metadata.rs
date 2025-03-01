@@ -3,6 +3,7 @@ use anyhow::Result;
 use itertools::Itertools;
 
 
+#[derive(Debug, Clone, Copy)]
 pub struct Metadata {
     expire: u128,
 }
@@ -46,6 +47,21 @@ impl TryFrom<u128> for Metadata {
 
         Ok(Metadata {
             expire: now + (secs * 1000),
+        })
+    }
+}
+
+impl TryFrom<Option<u64>> for Metadata {
+    type Error = anyhow::Error;
+
+    fn try_from(ms: Option<u64>) -> Result<Self> {
+        let expire = match ms {
+            None => u128::MAX,
+            Some(ms) => ms as u128,
+        };
+
+        Ok(Metadata {
+            expire,
         })
     }
 }

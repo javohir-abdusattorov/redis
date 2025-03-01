@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use rand::Rng;
 use fast_glob::glob_match;
-use crate::metadata::Metadata;
+use crate::operation::metadata::Metadata;
 
 
 pub struct Database {
@@ -47,12 +47,12 @@ impl Database {
         }
     }
 
-    pub fn set_expire(&mut self, key: &String, metatada: Metadata) -> Option<u128> {
+    pub fn set_expire(&mut self, key: &String, metadata: Metadata) -> Option<u128> {
         self
             .get(key)
             .map(|_| {
-                let timestamp = metatada.expire_timestamp();
-                self.metadata.insert(key.clone(), metatada);
+                let timestamp = metadata.expire_timestamp();
+                self.metadata.insert(key.clone(), metadata);
 
                 timestamp
             })
