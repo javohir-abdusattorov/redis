@@ -29,13 +29,8 @@ impl Config {
             key_map: HashMap::default(), 
         };
 
-        config.key_map = HashMap::from([
-            ("host".to_string(), config.host.clone()),
-            ("port".to_string(), config.port.clone()),
-            ("expiration_enabled".to_string(), config.interval_expiration_enabled.to_string().clone()),
-            ("dir".to_string(), config.rdb_dir.clone()),
-            ("dbfilename".to_string(), config.rdb_file.clone()),
-        ]);
+        config.parse_from_args();
+        config.build_key_map();
 
         config
     }
@@ -44,5 +39,30 @@ impl Config {
         self.key_map
             .get(key)
             .map(|value| value.clone())
+    }
+
+    fn parse_from_args(&mut self) {
+        std::env::args()
+            .skip(1)
+            .step_by(2)
+            .zip(std::env::args().skip(2).step_by(2))
+            .map(|(key, value)| (key.replace("--", ""), value))
+            .for_each(|(key, value)| {
+                match key.as_str() {
+                    "port" => self.port = value,
+                    "host" => self.host = value,
+                    _ => {}
+                }
+            });
+    }
+
+    fn build_key_map(&mut self) {
+        self.key_map = HashMap::from([
+            ("host".to_string(), self.host.clone()),
+            ("port".to_string(), self.port.clone()),
+            ("expiration_enabled".to_string(), self.interval_expiration_enabled.to_string().clone()),
+            ("dir".to_string(), self.rdb_dir.clone()),
+            ("dbfilename".to_string(), self.rdb_file.clone()),
+        ]);
     }
 }
