@@ -1,8 +1,9 @@
+use std::sync::{Arc, Mutex};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use bytes::BytesMut;
 use anyhow::Result;
 use super::router::Router;
-use crate::operation::operation::Operation;
+use crate::{operation::operation::Operation, replication::replicator::Replicator};
 
 
 pub struct Handler {
@@ -15,8 +16,8 @@ impl Handler {
     pub fn new(stream: TcpStream, router: Router) -> Self {
         Handler {
             stream,
+            router,
             buffer: BytesMut::with_capacity(512),
-            router
         }
     }
 
@@ -57,7 +58,7 @@ impl Handler {
         match operation {
             Operation::Sequential(sequence) => {
                 for operation in sequence {
-                    self.stream.write(&operation.to_bytes()).await;
+                    self.stream.write(&operation.to_bytes()).await?;
                 }
             },
             _ => {

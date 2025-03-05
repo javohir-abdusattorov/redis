@@ -21,4 +21,8 @@ impl ReplicationMember {
             port: port.to_string(),
         }
     }
+
+    pub fn address(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
 }

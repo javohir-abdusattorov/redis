@@ -1,9 +1,8 @@
 use super::{member::ReplicationMember, role::ReplicationRole};
 use crate::{config::Config, operation::operation::Operation, server::{client::Client, constants}};
 use anyhow::Result;
-use bytes::BytesMut;
 use itertools::Itertools;
-use std::{fs::File, io::Write, path::Path, sync::Arc};
+use std::{fs::File, io::Write, path::Path, sync::{mpsc::{Receiver, Sender}, Arc}};
 
 
 pub struct Replicator {
@@ -11,22 +10,27 @@ pub struct Replicator {
     role: ReplicationRole,
     master: ReplicationMember,
     slaves: Vec<ReplicationMember>,
+    channel: Sender<Operation>,
 }
 
 impl Replicator {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: Arc<Config>) -> (Self, Receiver<Operation>) {
         let master = ReplicationMember::new(
             ReplicationRole::Master,
             config.repl_id.to_string(),
             format!("{}:{}", config.host, config.port)
         );
 
-        Replicator {
+        let (tx, rv) = std::sync::mpsc::channel::<Operation>();
+        let replicator = Replicator {
             role: config.repl_role,
             config,
             master,
             slaves: Vec::default(),
-        }
+            channel: tx,
+        };
+
+        (replicator, rv)
     }
 
     pub fn is_slave(&self) -> bool {
@@ -39,6 +43,14 @@ impl Replicator {
 
     pub fn get_master(&self) -> &ReplicationMember {
         &self.master
+    }
+
+    pub fn get_slaves(&self) -> &Vec<ReplicationMember> {
+        &self.slaves
+    }
+
+    pub fn slaves_count(&self) -> usize {
+        self.slaves.len()
     }
 
     pub fn handshake_to_master(&mut self) -> Result<()> {
@@ -93,7 +105,7 @@ impl Replicator {
 
     pub fn join_slave(&mut self, address: String) -> Result<()> {
         if self.is_slave() {
-            return Err(anyhow::anyhow!("Cannot join slave to slave, connect to master"));
+            return Err(anyhow::anyhow!("Cannot join slave to slave, connect to master at: {}", self.master.address()));
         }
 
         let slave = ReplicationMember::new(
@@ -105,7 +117,11 @@ impl Replicator {
         Ok(())
     }
 
-    pub fn slaves_count(&self) -> usize {
-        self.slaves.len()
+    pub fn distribute(&self, message: Operation) -> Result<()> {
+        if self.is_master() && self.slaves_count() >= 1 {
+            self.channel.send(message)?;
+        }
+
+        Ok(())
     }
 }

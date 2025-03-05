@@ -12,12 +12,3 @@ impl ToString for ReplicationRole {
         }
     }
 }
-
-impl ReplicationRole {
-    pub fn needs_handshake(&self) -> bool {
-        match self {
-            ReplicationRole::Master => false,
-            ReplicationRole::Slave => true,
-        }
-    }
-}

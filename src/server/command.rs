@@ -1,6 +1,7 @@
 use anyhow::Result;
 use itertools::Itertools;
 use crate::operation::operation::Operation;
+use super::constants::commands;
 
 
 #[derive(Clone, Debug)]
@@ -52,5 +53,14 @@ impl Command {
             .into_iter()
             .skip(n)
             .collect()
+    }
+
+    pub fn is_write(&self) -> bool {
+        match self.can_match().as_str() {
+            commands::SET => true,
+            commands::EXPIRE => true,
+            commands::DEL => true,
+            _ => false
+        }
     }
 }

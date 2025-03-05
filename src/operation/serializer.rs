@@ -1,6 +1,7 @@
 use std::{fs::File, io::Read};
 use super::operation::Operation;
 
+
 impl Operation {
     pub fn to_bytes(&self) -> Vec<u8> {
         let crlf = "\r\n";

@@ -3,13 +3,13 @@ use crate::{config::Config, replication::replicator::Replicator};
 use crate::operation::metadata::Metadata;
 use crate::operation::operation::Operation;
 use crate::storage::db::Database;
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use std::sync::{Arc, Mutex};
 
 pub struct Router {
     config: Arc<Config>,
     db: Arc<Mutex<Database>>,
-    replicator: Arc<Mutex<Replicator>>
+    replicator: Arc<Mutex<Replicator>>,
 }
 
 impl Router {
@@ -18,8 +18,11 @@ impl Router {
     }
 
     pub fn handle(&mut self, operation: Operation) -> Result<Operation> {
-        let command = Command::try_from(operation)?;
-        match command.can_match().as_str() {
+        let command = Command::try_from(operation.clone())?;
+        let is_write = command.is_write();
+        println!("[Command] {}", &command.can_match());
+
+        let result = match command.can_match().as_str() {
             commands::PING | commands::COMMAND => self.pong(),
             commands::ECHO => self.echo(command),
             commands::GET => self.get(command),
@@ -35,7 +38,13 @@ impl Router {
             unknown_command => Err(anyhow::anyhow!(format!(
                 "[Router] Unexpected command: {unknown_command:?}"
             ))),
+        }?;
+
+        if is_write {
+            self.replicator.lock().unwrap().distribute(operation);
         }
+
+        Ok(result)
     }
 
     fn pong(&self) -> Result<Operation> {

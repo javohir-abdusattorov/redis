@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use config::Config;
 use expiration::Expiration;
 use operation::metadata::Metadata;
-use replication::replicator::Replicator;
+use replication::{distributor::Distributor, replicator::Replicator};
 use server::server::Server;
 use storage::{db::Database, parser::Parser};
 
@@ -20,10 +20,12 @@ fn main() {
     let db: Arc<Mutex<Database>> = Arc::new(Mutex::new(Database::new()));
     populate(Arc::clone(&db));
 
-    let mut replicator = Replicator::new(Arc::clone(&config));
+    let (mut replicator, channel) = Replicator::new(Arc::clone(&config));
     replicator.handshake_to_master().unwrap();
+    let channel = Arc::new(Mutex::new(channel));
     let replicator = Arc::new(Mutex::new(replicator));
 
+    Distributor::new(Arc::clone(&replicator), Arc::clone(&channel)).run();
     Parser::new(Arc::clone(&config), Arc::clone(&db)).parse().unwrap();
     Expiration::new(Arc::clone(&config), Arc::clone(&db)).run();
     Server::new(Arc::clone(&config), Arc::clone(&db), Arc::clone(&replicator)).start();

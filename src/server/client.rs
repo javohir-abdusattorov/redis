@@ -1,4 +1,4 @@
-use std::{fs::File, io::{BufReader, Read, Write}, net::TcpStream, path::Path};
+use std::{io::{Read, Write}, net::TcpStream};
 use anyhow::Result;
 use bytes::BytesMut;
 use itertools::Itertools;
@@ -28,16 +28,13 @@ impl Client {
 
     pub fn receive_file(&mut self) -> Result<Vec<u8>> {
         let mut file_buf = Vec::new();
-        let mut read_bytes = 512;
 
         loop {
-            read_bytes = self.stream.read(&mut self.read_buffer)?;
+            let read_bytes = self.stream.read(&mut self.read_buffer)?;
             file_buf.extend_from_slice(&self.read_buffer[..read_bytes]);
             if read_bytes < 512 { break; }
         }
 
-        println!("file = {:?}", String::from_utf8_lossy(&file_buf));
-        println!("received = {}", file_buf.len());
         let end_of_len = file_buf.iter().find_position(|c| **c as char == '\n').unwrap();
         let buf = file_buf.split_off(end_of_len.0 + 1);
 
