@@ -1,3 +1,5 @@
+use crate::replication::role::ReplicationRole;
+use rand::Rng;
 use std::{collections::HashMap, time::Duration};
 
 
@@ -11,6 +13,10 @@ pub struct Config {
     pub expiration_max_interval: Duration,
     pub rdb_dir: String,
     pub rdb_file: String,
+    pub rdb_empty_file: String,
+    pub repl_role: ReplicationRole,
+    pub repl_master_address: String,
+    pub repl_id: String,
     pub key_map: HashMap<String, String>,
 }
 
@@ -26,7 +32,15 @@ impl Config {
             expiration_max_interval: Duration::from_secs(60),
             rdb_dir: "/home/javohir/Downloads/Temp/rdb".to_string(),
             rdb_file: "dump.rdb".to_string(),
-            key_map: HashMap::default(), 
+            rdb_empty_file: "/home/javohir/Documents/Programming/Learning/Build Your Own/redis/static/empty.rdb".to_string(),
+            repl_role: ReplicationRole::Master,
+            repl_id: rand::rng()
+                .sample_iter(rand::distr::Alphanumeric)
+                .take(40)
+                .map(char::from)
+                .collect(),
+            repl_master_address: String::new(),
+            key_map: HashMap::default(),
         };
 
         config.parse_from_args();
@@ -36,9 +50,7 @@ impl Config {
     }
 
     pub fn get_by_key(&self, key: &String) -> Option<String> {
-        self.key_map
-            .get(key)
-            .map(|value| value.clone())
+        self.key_map.get(key).map(|value| value.clone())
     }
 
     fn parse_from_args(&mut self) {
@@ -51,6 +63,10 @@ impl Config {
                 match key.as_str() {
                     "port" => self.port = value,
                     "host" => self.host = value,
+                    "replicaof" => {
+                        self.repl_role = ReplicationRole::Slave;
+                        self.repl_master_address = value.replace(" ", ":");
+                    },
                     _ => {}
                 }
             });

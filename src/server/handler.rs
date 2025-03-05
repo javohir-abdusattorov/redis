@@ -54,8 +54,17 @@ impl Handler {
     }
 
     async fn write_value(&mut self, operation: Operation) -> Result<()> {
-        // println!("response: {:?}", operation.clone().to_string());
-        self.stream.write(operation.to_string().as_bytes()).await?;
+        match operation {
+            Operation::Sequential(sequence) => {
+                for operation in sequence {
+                    self.stream.write(&operation.to_bytes()).await;
+                }
+            },
+            _ => {
+                self.stream.write(&operation.to_bytes()).await?;
+            }
+        };
+
         Ok(())
     }
 }

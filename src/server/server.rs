@@ -1,21 +1,18 @@
+use super::{handler::Handler, router::Router};
+use crate::{config::Config, replication::replicator::Replicator};
+use crate::storage::db::Database;
 use std::{net::SocketAddr, sync::{Arc, Mutex}};
 use tokio::{net::{TcpListener, TcpStream}, runtime::Runtime};
-use super::{handler::Handler, router::Router};
-use crate::config::Config;
-use crate::storage::db::Database;
-
 
 pub struct Server {
     config: Arc<Config>,
     db: Arc<Mutex<Database>>,
+    replicator: Arc<Mutex<Replicator>>,
 }
 
 impl Server {
-    pub fn new(config: Arc<Config>, db: Arc<Mutex<Database>>) -> Self {
-        Server {
-            config,
-            db,
-        }
+    pub fn new(config: Arc<Config>, db: Arc<Mutex<Database>>, replicator: Arc<Mutex<Replicator>>) -> Self {
+        Server { config, db, replicator }
     }
 
     pub fn start(self) {
@@ -30,9 +27,7 @@ impl Server {
         std::thread::Builder::new()
             .name("server".into())
             .spawn(move || {
-                Runtime::new()
-                    .unwrap()
-                    .block_on(server);
+                Runtime::new().unwrap().block_on(server);
             })
             .unwrap();
     }
@@ -43,9 +38,7 @@ impl Server {
                 Err(err) => {
                     println!("[Server] cannot establish connection: {err}");
                 }
-                Ok((stream, addr)) => {
-                    self.handler(stream, addr)
-                },
+                Ok((stream, addr)) => self.handler(stream, addr),
             }
         }
     }
@@ -53,10 +46,11 @@ impl Server {
     fn handler(&self, stream: TcpStream, addr: SocketAddr) {
         let config = Arc::clone(&self.config);
         let db = Arc::clone(&self.db);
+        let replicator = Arc::clone(&self.replicator);
         println!("[Server] connection established: {addr:?}");
 
         tokio::spawn(async move {
-            let router = Router::new(config, db);
+            let router = Router::new(config, db, replicator);
             let mut handler = Handler::new(stream, router);
 
             handler.process().await

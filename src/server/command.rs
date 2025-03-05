@@ -26,8 +26,8 @@ impl TryFrom<Operation> for Command {
 }
 
 impl Command {
-    pub fn as_str(&self) -> &str {
-        self.command.as_str()
+    pub fn can_match(&self) -> String {
+        self.command.to_lowercase()
     }
 
     pub fn single_argument(&self) -> Result<String> {

@@ -1,43 +1,45 @@
-use std::sync::{Arc, Mutex};
-use anyhow::{Ok, Result};
-use super::command::Command;
-use crate::config::Config;
+use super::{command::Command, constants::{commands, responses}};
+use crate::{config::Config, replication::replicator::Replicator};
 use crate::operation::metadata::Metadata;
 use crate::operation::operation::Operation;
 use crate::storage::db::Database;
-
+use anyhow::{Ok, Result};
+use std::sync::{Arc, Mutex};
 
 pub struct Router {
     config: Arc<Config>,
     db: Arc<Mutex<Database>>,
-}   
+    replicator: Arc<Mutex<Replicator>>
+}
 
 impl Router {
-    pub fn new(config: Arc<Config>, db: Arc<Mutex<Database>>) -> Self {
-        Router {
-            config,
-            db,
-        }
+    pub fn new(config: Arc<Config>, db: Arc<Mutex<Database>>, replicator: Arc<Mutex<Replicator>>) -> Self {
+        Router { config, db, replicator }
     }
 
     pub fn handle(&mut self, operation: Operation) -> Result<Operation> {
         let command = Command::try_from(operation)?;
-        match command.as_str() {
-            "ping" | "command" => self.pong(),
-            "echo" => self.echo(command),
-            "get" => self.get(command),
-            "set" => self.set(command),
-            "expire" => self.expire(command),
-            "del" => self.del(command),
-            "ttl" => self.ttl(command),
-            "keys" => self.keys(command),
-            "config" => self.config(command),
-            unknown_command => Err(anyhow::anyhow!(format!("[Router] Unexpected command: {unknown_command:?}")))
+        match command.can_match().as_str() {
+            commands::PING | commands::COMMAND => self.pong(),
+            commands::ECHO => self.echo(command),
+            commands::GET => self.get(command),
+            commands::SET => self.set(command),
+            commands::EXPIRE => self.expire(command),
+            commands::DEL => self.del(command),
+            commands::TTL => self.ttl(command),
+            commands::KEYS => self.keys(command),
+            commands::CONFIG => self.config(command),
+            commands::INFO => self.info(command),
+            commands::REPLCONF => self.replconf(command),
+            commands::PSYNC => self.psync(command),
+            unknown_command => Err(anyhow::anyhow!(format!(
+                "[Router] Unexpected command: {unknown_command:?}"
+            ))),
         }
     }
 
     fn pong(&self) -> Result<Operation> {
-        Ok(Operation::String("PONG".to_string()))
+        Ok(Operation::String(responses::PONG.to_string()))
     }
 
     fn echo(&self, command: Command) -> Result<Operation> {
@@ -64,10 +66,19 @@ impl Router {
 
     fn expire(&self, command: Command) -> Result<Operation> {
         let (key, expire_seconds) = command.first_2_arguments()?;
-        let seconds = expire_seconds.parse::<u128>().map_err(|_| anyhow::anyhow!(format!("Expire command invalid arguments: cannot parse to integer")))?;
+        let seconds = expire_seconds.parse::<u128>().map_err(|_| {
+            anyhow::anyhow!(format!(
+                "Expire command invalid arguments: cannot parse to integer"
+            ))
+        })?;
 
         let metadata = Metadata::try_from(seconds).unwrap();
-        let timestamp = self.db.lock().unwrap().set_expire(&key, metadata).unwrap_or(0);
+        let timestamp = self
+            .db
+            .lock()
+            .unwrap()
+            .set_expire(&key, metadata)
+            .unwrap_or(0);
 
         Ok(Operation::Integer(timestamp as i128))
     }
@@ -90,7 +101,8 @@ impl Router {
 
         // This can be done without re-defining variable, but db mutex lock would not have been dropped
         // we need db mutex lock inside mapping / filtering of search result
-        let result = result.into_iter()
+        let result = result
+            .into_iter()
             .filter(|value| self.db.lock().unwrap().try_expire(value).is_none())
             .map(|value| Operation::Bulk(value))
             .collect();
@@ -107,13 +119,76 @@ impl Router {
                     Some(value) => vec![config, value.clone()],
                 };
 
-                let result = result.into_iter()
+                let result = result
+                    .into_iter()
                     .map(|value| Operation::Bulk(value))
                     .collect();
 
                 Ok(Operation::Array(result))
-            },
-            any_command => Err(anyhow::anyhow!("Unexpected CONFIG command: {any_command}"))
+            }
+            any_command => Err(anyhow::anyhow!("Unexpected CONFIG command: {any_command}")),
         }
+    }
+
+    fn info(&self, command: Command) -> Result<Operation> {
+        let command = command.single_argument()?;
+        let (header, info) = match command.as_str() {
+            "replication" => {
+                let replicator = self.replicator.lock().unwrap();
+                let header = "Replication";
+                let info = [
+                    ("role", self.config.repl_role.to_string()),
+                    ("connected_slaves", replicator.slaves_count().to_string()),
+                    ("master_replid", replicator.get_master().id.to_string()),
+                    ("master_replid2", "0000000000000000000000000000000000000000".to_string()),
+                    ("master_repl_offset", "0".to_string()),
+                    ("second_repl_offset", "-1".to_string()),
+                    ("repl_backlog_active", "0".to_string()),
+                    ("repl_backlog_size", "1048576".to_string()),
+                    ("repl_backlog_first_byte_offset", "0".to_string()),
+                    ("repl_backlog_histlen", "0".to_string()),
+                ];
+
+                (header, info)
+            }
+            any_command => return Err(anyhow::anyhow!("Unexpected INFO command: {any_command}")),
+        };
+
+        let formatted = [
+            format!("# {header}\n"),
+            info.into_iter()
+                .map(|(key, value)| format!("{key}:{value}\n"))
+                .collect::<String>(),
+        ]
+        .into_iter()
+        .collect::<String>();
+
+        Ok(Operation::Bulk(formatted))
+    }
+
+    fn replconf(&self, command: Command) -> Result<Operation> {
+        let (command, config) = command.first_2_arguments()?;
+        match command.as_str() {
+            "listening-port" => {
+                let address = format!("127.0.0.1:{config}");
+                self.replicator.lock().unwrap().join_slave(address)?;
+                Ok(Operation::String(responses::OK.to_string()))
+            },
+            "capa" => {
+                Ok(Operation::String(responses::OK.to_string()))
+            },
+            any_command => Err(anyhow::anyhow!("Unexpected REPLCONF command: {any_command}")),
+        }
+    }
+
+    fn psync(&self, command: Command) -> Result<Operation> {
+        let (_master_id, offset) = command.first_2_arguments()?;
+        let _offset = offset.parse::<i32>()?;
+        let master_id = self.config.repl_id.clone();
+
+        Ok(Operation::Sequential(vec![
+            Operation::String(format!("FULLRESYNC {master_id} 0")),
+            Operation::File(self.config.rdb_empty_file.clone()),
+        ]))
     }
 }

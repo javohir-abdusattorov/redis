@@ -6,7 +6,9 @@ pub enum Operation {
     String(String),
     Bulk(String),
     Array(Vec<Operation>),
+    Sequential(Vec<Operation>),
     Integer(i128),
+    File(String),
     Error(String),
     Null()
 }
@@ -26,6 +28,13 @@ impl Operation {
         match self {
             Operation::Bulk(str) => Ok(str),
             _ => Err(anyhow::anyhow!("Unexpected command to only_bulk: {self:?}"))
+        }
+    }
+
+    pub fn only_string(self) -> Result<String> {
+        match self {
+            Operation::String(str) => Ok(str),
+            _ => Err(anyhow::anyhow!("Unexpected command to only_string: {self:?}"))
         }
     }
 }

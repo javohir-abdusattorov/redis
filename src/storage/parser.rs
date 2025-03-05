@@ -57,12 +57,10 @@ impl Parser {
             let operation = self.read_u8()?;
             match operation {
                 opcode::META => {
-                    let (key_str, value_str) = (
+                    let (_key_str, _value_str) = (
                         self.read_string()?,
                         self.read_string()?,
                     );
-
-                    println!("[Metadata] {key_str} = {value_str}");
                 }
                 opcode::START_DB => {
                     self.database = self.read_length()?;

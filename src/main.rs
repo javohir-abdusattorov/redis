@@ -1,7 +1,10 @@
+#![allow(warnings)]
+
 use std::sync::{Arc, Mutex};
 use config::Config;
 use expiration::Expiration;
 use operation::metadata::Metadata;
+use replication::replicator::Replicator;
 use server::server::Server;
 use storage::{db::Database, parser::Parser};
 
@@ -9,17 +12,21 @@ mod operation;
 mod server;
 mod storage;
 mod config;
+mod replication;
 mod expiration;
 
 fn main() {
     let config = Arc::new(Config::build());
     let db: Arc<Mutex<Database>> = Arc::new(Mutex::new(Database::new()));
-
     populate(Arc::clone(&db));
+
+    let mut replicator = Replicator::new(Arc::clone(&config));
+    replicator.handshake_to_master().unwrap();
+    let replicator = Arc::new(Mutex::new(replicator));
 
     Parser::new(Arc::clone(&config), Arc::clone(&db)).parse().unwrap();
     Expiration::new(Arc::clone(&config), Arc::clone(&db)).run();
-    Server::new(Arc::clone(&config), Arc::clone(&db)).start();
+    Server::new(Arc::clone(&config), Arc::clone(&db), Arc::clone(&replicator)).start();
 
     std::thread::park();
 }
