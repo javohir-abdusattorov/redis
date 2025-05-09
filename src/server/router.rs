@@ -182,10 +182,19 @@ impl Router {
                 let address = format!("127.0.0.1:{config}");
                 self.replicator.lock().unwrap().join_slave(address)?;
                 Ok(Operation::String(responses::OK.to_string()))
-            },
+            }
             "capa" => {
                 Ok(Operation::String(responses::OK.to_string()))
-            },
+            }
+            "getack" => {
+                let offset = self.replicator.lock().unwrap().get_offset();
+                println!("offset = {offset}");
+                Ok(Operation::Array(vec![
+                    Operation::Bulk(commands::REPLCONF.into()),
+                    Operation::Bulk("ACK".into()),
+                    Operation::Bulk(offset.to_string()),
+                ]))
+            }
             any_command => Err(anyhow::anyhow!("Unexpected REPLCONF command: {any_command}")),
         }
     }

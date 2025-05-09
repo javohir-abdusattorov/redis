@@ -2,15 +2,16 @@ use super::{member::ReplicationMember, role::ReplicationRole};
 use crate::{config::Config, operation::operation::Operation, server::{client::Client, constants}};
 use anyhow::Result;
 use itertools::Itertools;
-use std::{fs::File, io::Write, path::Path, sync::{mpsc::{Receiver, Sender}, Arc}};
+use std::{collections::HashMap, fs::File, io::Write, net::TcpStream, path::Path, sync::{mpsc::{Receiver, Sender}, Arc}};
 
 
 pub struct Replicator {
     config: Arc<Config>,
     role: ReplicationRole,
     master: ReplicationMember,
-    slaves: Vec<ReplicationMember>,
+    slaves: HashMap<String, ReplicationMember>,
     channel: Sender<Operation>,
+    offset: u32,
 }
 
 impl Replicator {
@@ -26,8 +27,9 @@ impl Replicator {
             role: config.repl_role,
             config,
             master,
-            slaves: Vec::default(),
+            slaves: HashMap::default(),
             channel: tx,
+            offset: 0,
         };
 
         (replicator, rv)
@@ -45,8 +47,12 @@ impl Replicator {
         &self.master
     }
 
-    pub fn get_slaves(&self) -> &Vec<ReplicationMember> {
-        &self.slaves
+    pub fn get_slaves(&mut self) -> &mut HashMap<String, ReplicationMember> {
+        &mut self.slaves
+    }
+
+    pub fn get_offset(&self) -> u32 {
+        self.offset
     }
 
     pub fn slaves_count(&self) -> usize {
@@ -105,15 +111,17 @@ impl Replicator {
 
     pub fn join_slave(&mut self, address: String) -> Result<()> {
         if self.is_slave() {
-            return Err(anyhow::anyhow!("Cannot join slave to slave, connect to master at: {}", self.master.address()));
+            return Err(anyhow::anyhow!("Cannot join slave to slave, connect to master at: {}", self.master.address));
         }
 
-        let slave = ReplicationMember::new(
-            ReplicationRole::Slave,
-            String::new(),
-            address,
+        self.slaves.insert(
+            address.clone(),
+            ReplicationMember::new(
+                ReplicationRole::Slave,
+                String::new(),
+                address,
+            ),
         );
-        self.slaves.push(slave);
         Ok(())
     }
 
@@ -123,5 +131,9 @@ impl Replicator {
         }
 
         Ok(())
+    }
+
+    pub fn offset(&mut self, bytes: usize) {
+        self.offset += bytes as u32;
     }
 }

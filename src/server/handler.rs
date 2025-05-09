@@ -8,23 +8,27 @@ use crate::{operation::operation::Operation, replication::replicator::Replicator
 
 pub struct Handler {
     stream: TcpStream,
-    buffer: BytesMut,
     router: Router,
+    replicator: Arc<Mutex<Replicator>>,
+    buffer: BytesMut,
+    offset: usize,
 }
 
 impl Handler {
-    pub fn new(stream: TcpStream, router: Router) -> Self {
+    pub fn new(stream: TcpStream, router: Router, replicator: Arc<Mutex<Replicator>>) -> Self {
         Handler {
             stream,
             router,
+            replicator,
             buffer: BytesMut::with_capacity(512),
+            offset: 0,
         }
     }
 
-    pub async fn process(&mut self) {
+    pub async fn process(mut self) {
         loop {
             let value: Result<Option<Operation>> = self.read_value().await;
-            let unexpected_err = |err| anyhow::anyhow!(format!("[Handler] Unexpected request: {err:?}"));
+            let unexpected_err = |err| anyhow::anyhow!("[Handler] Unexpected request: {err:?}");
 
             let error_handle = || -> Result<Option<Operation>> {
                 match value.map_err(unexpected_err)? {
@@ -41,13 +45,14 @@ impl Handler {
                 },
             };
 
-            self.write_value(response).await.unwrap()
+            self.write_value(response).await.unwrap();
+            self.replicator.lock().unwrap().offset(self.offset);
         }
     }
 
     async fn read_value(&mut self) -> Result<Option<Operation>> {
-        let bytes_read = self.stream.read_buf(&mut self.buffer).await?;
-        if bytes_read == 0 {
+        self.offset = self.stream.read_buf(&mut self.buffer).await?;
+        if self.offset == 0 {
             return Ok(None);
         }
 

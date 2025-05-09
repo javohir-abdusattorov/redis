@@ -18,11 +18,15 @@ impl Client {
     }
 
     pub fn send(&mut self, command: Vec<String>) -> Result<Operation> {
-        let command = command.into_iter().map(|s| Operation::Bulk(s)).collect();
-        self.stream.write_all(&Operation::Array(command).to_bytes())?;
+        Client::send_ref(&mut self.stream, &mut self.read_buffer, command)
+    }
 
-        let read_bytes = self.stream.read(&mut self.read_buffer)?;
-        let operation = Operation::try_from(BytesMut::from(&self.read_buffer[..read_bytes]).split())?;
+    pub fn send_ref(stream: &mut TcpStream, buffer: &mut [u8], command: Vec<String>) -> Result<Operation> {
+        let command = command.into_iter().map(|s| Operation::Bulk(s)).collect();
+        stream.write_all(&Operation::Array(command).to_bytes())?;
+
+        let read_bytes = stream.read(buffer)?;
+        let operation = Operation::try_from(BytesMut::from(&buffer[..read_bytes]).split())?;
         Ok(operation)
     }
 

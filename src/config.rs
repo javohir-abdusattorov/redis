@@ -17,6 +17,7 @@ pub struct Config {
     pub repl_role: ReplicationRole,
     pub repl_master_address: String,
     pub repl_id: String,
+    pub repl_health_check_interval: Duration,
     pub key_map: HashMap<String, String>,
 }
 
@@ -40,6 +41,7 @@ impl Config {
                 .map(char::from)
                 .collect(),
             repl_master_address: String::new(),
+            repl_health_check_interval: Duration::from_secs(20),
             key_map: HashMap::default(),
         };
 

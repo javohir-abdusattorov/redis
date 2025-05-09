@@ -1,28 +1,32 @@
-use itertools::Itertools;
 use super::role::ReplicationRole;
+use std::net::TcpStream;
+use anyhow::{anyhow, Result};
+use itertools::Itertools;
 
 
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct ReplicationMember {
     pub id: String,
     pub role: ReplicationRole,
-    pub host: String,
-    pub port: String,
+    pub address: String,
+    stream: Option<TcpStream>,
 }
 
 impl ReplicationMember {
     pub fn new(role: ReplicationRole, id: String, address: String) -> Self {
-        let (host, port) = address.split(":").next_tuple().unwrap();
-
         ReplicationMember {
             id,
             role,
-            host: host.to_string(),
-            port: port.to_string(),
+            address,
+            stream: None,
         }
     }
 
-    pub fn address(&self) -> String {
-        format!("{}:{}", self.host, self.port)
+    pub fn connect(&mut self) -> Result<&mut Option<TcpStream>> {
+        if let None = self.stream {
+            self.stream = Some(TcpStream::connect(self.address.clone())?);
+        }
+
+        Ok(&mut self.stream)
     }
 }

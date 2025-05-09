@@ -1,13 +1,13 @@
-use crate::operation::operation::Operation;
+use crate::{operation::operation::Operation, server::{client::Client, constants::commands}};
 use super::replicator::Replicator;
-use std::{collections::HashMap, io::Write, net::TcpStream, sync::{mpsc::Receiver, Arc, Mutex}};
+use std::{collections::HashMap, io::Write, net::TcpStream, sync::{mpsc::Receiver, Arc, Mutex}, time::Duration};
 use anyhow::Result;
 
 
 pub struct Distributor {
     replicator: Arc<Mutex<Replicator>>,
     channel: Arc<Mutex<Receiver<Operation>>>,
-    streams: HashMap<String, TcpStream>,
+    streams: Arc<Mutex<HashMap<String, TcpStream>>>,
     initialized: bool,
 }
 
@@ -16,7 +16,7 @@ impl Distributor {
         Distributor {
             replicator,
             channel,
-            streams: HashMap::new(),
+            streams: Arc::new(Mutex::new(HashMap::new())),
             initialized: false,
         }
     }
@@ -35,34 +35,16 @@ impl Distributor {
 
     fn distribute(mut self) {
         for event in self.channel.lock().unwrap().iter() {
+            let bytes = event.to_bytes();
             self.replicator
                 .lock()
                 .unwrap()
                 .get_slaves()
                 .into_iter()
-                .map(|slave| slave.address())
-                .map(|address| -> Result<(String, TcpStream)> {
-                    match self.streams.get(&address) {
-                        None => {
-                            let stream = TcpStream::connect(address.clone())?;
-                            self.streams.insert(address.clone(), stream.try_clone()?);
-                            Ok((address.clone(), stream))
-                        },
-                        Some(stream) => Ok((address, stream.try_clone()?))
-                    }
-                })
-                .for_each(|stream| {
-                    match stream {
-                        Ok((address, mut stream)) => {
-                            println!("SENDING THIS TO NIGGA - {address}:");
-                            println!("{event:?}");
-                            stream.write(&event.to_bytes()).unwrap();
-                        }
-                        Err(err) => {
-                            println!("Cannot send to this nigga:");
-                            println!("{err}");
-                        }
-                    }
+                .filter_map(|(_, slave)| slave.connect().ok())
+                .for_each(|slave| {
+                    slave.as_mut().unwrap().write(&bytes).unwrap();
+                    slave.as_mut().unwrap().flush().unwrap();
                 });
         }
     }
