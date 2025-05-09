@@ -5,7 +5,7 @@ use fast_glob::glob_match;
 use crate::operation::metadata::Metadata;
 
 
-pub struct Database {
+pub struct  Database {
     storage: HashMap<String, String>,
     metadata: HashMap<String, Metadata>,
     keys: Vec<String>,
